@@ -1,8 +1,9 @@
-"""One-for-one Python port of 海龟回测_沪深300_周淞铭.xlsx.
+"""Turtle-trading backtest driven by raw OHLC data.
 
-The calculation order, strict inequalities, previous-day references, Excel
-ROUNDDOWN behaviour and performance statistics intentionally mirror the source
-workbook.  The implementation uses only Python's standard library.
+The trading formulas retain the calculation order, strict inequalities,
+previous-bar references, execution assumptions and performance definitions
+validated in the original workbook.  Spreadsheet coordinates and formula-cell
+locations are deliberately not part of the strategy engine.
 """
 
 from __future__ import annotations
@@ -13,13 +14,13 @@ import re
 import statistics
 import zipfile
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 try:
     from .inspect_workbook import shared_strings, sheet_cells
-except ImportError:  # Direct execution from the Py_version directory.
+except ImportError:  # Direct script execution from the repository root.
     from inspect_workbook import shared_strings, sheet_cells
 
 
@@ -33,7 +34,14 @@ class Parameters:
     sell_cost_rate: float = 0.0007
     initial_cash: float = 1_000_000.0
     lot_size: int = 100
-    first_signal_excel_row: int = 57
+    warmup_bars: int | None = None
+
+    @property
+    def required_history(self) -> int:
+        """Number of completed bars required before signals are evaluated."""
+        if self.warmup_bars is not None:
+            return self.warmup_bars
+        return max(self.atr_period, self.entry_period, self.exit_period)
 
 
 @dataclass(frozen=True)
@@ -105,23 +113,20 @@ class Summary:
 
 def _positive(value: object) -> float | None:
     try:
-        number = float(value)  # Excel comparison treats the intended inputs as numeric.
+        number = float(value)
     except (TypeError, ValueError):
         return None
     return number if number > 0 else None
 
 
-def _excel_serial(value: object) -> float:
+def _day_number(value: object) -> float:
+    """Convert a date, datetime, or spreadsheet serial date to a day number."""
     if isinstance(value, datetime):
         value = value.date()
     if isinstance(value, date):
-        # Excel's 1900 date system includes its fictitious 1900-02-29.
+        # Spreadsheet serial dates in the raw workbook use the 1900 date system.
         return float((value - date(1899, 12, 30)).days)
     return float(value)
-
-
-def excel_serial_to_date(value: float | int) -> date:
-    return date(1899, 12, 30) + timedelta(days=float(value))
 
 
 def run_backtest(
@@ -134,9 +139,24 @@ def run_backtest(
         raise ValueError("ATR周期和入场周期必须大于0")
     if parameters.exit_period <= 0 or parameters.lot_size <= 0:
         raise ValueError("退出周期和最小交易单位必须大于0")
+    if parameters.risk_fraction <= 0:
+        raise ValueError("风险比例必须大于0")
+    if parameters.buy_cost_rate < 0 or parameters.sell_cost_rate < 0:
+        raise ValueError("交易成本率不能小于0")
+    if parameters.initial_cash <= 0:
+        raise ValueError("初始资金必须大于0")
+    if parameters.warmup_bars is not None:
+        minimum_channel_history = max(
+            parameters.entry_period, parameters.exit_period
+        )
+        if parameters.warmup_bars < minimum_channel_history:
+            raise ValueError(
+                "自定义预热期不能小于入场周期和退出周期中的较大值"
+            )
 
     rows: list[BacktestRow] = []
     running_nav_high = parameters.initial_cash
+    required_history = parameters.required_history
 
     for index, bar in enumerate(source):
         previous = rows[-1] if rows else None
@@ -171,8 +191,8 @@ def run_backtest(
             n = parameters.atr_period
             atr = 2 / (n + 1) * tr + (n - 1) / (n + 1) * previous.atr
 
-        excel_row = index + 6
-        warmed_up = excel_row >= parameters.first_signal_excel_row
+        record_number = index + 1
+        warmed_up = len(rows) >= required_history
         if warmed_up:
             high_window = [
                 row.clean_high for row in rows[-parameters.entry_period :]
@@ -181,11 +201,11 @@ def run_backtest(
             if len(high_window) < parameters.entry_period or any(
                 value is None for value in high_window
             ):
-                raise ValueError(f"第 {excel_row} 行无法形成入场通道")
+                raise ValueError(f"第 {record_number} 条行情无法形成入场通道")
             if len(low_window) < parameters.exit_period or any(
                 value is None for value in low_window
             ):
-                raise ValueError(f"第 {excel_row} 行无法形成退出通道")
+                raise ValueError(f"第 {record_number} 条行情无法形成退出通道")
             past_high = max(high_window)  # type: ignore[arg-type]
             past_low = min(low_window)  # type: ignore[arg-type]
         else:
@@ -216,7 +236,7 @@ def run_backtest(
             stop_loss = None
         elif is_buy:
             if previous is None or previous.atr is None:
-                raise ValueError(f"第 {excel_row} 行缺少前一日 ATR")
+                raise ValueError(f"第 {record_number} 条行情缺少前一日 ATR")
             stop_loss = trade_price - previous.atr  # type: ignore[operator]
         elif signal == 1:
             stop_loss = previous_stop
@@ -238,7 +258,7 @@ def run_backtest(
                         trade_price * (1 + parameters.buy_cost_rate)
                     )
                     raw_position = min(risk_position, cash_position)
-                    # Excel ROUNDDOWN(x/lot, 0)*lot; all quantities are positive.
+                    # Equivalent to rounding a positive position down by lot size.
                     position = (
                         math.floor(raw_position / parameters.lot_size)
                         * parameters.lot_size
@@ -334,7 +354,7 @@ def run_backtest(
         statistics.stdev(returns) * math.sqrt(252) if len(returns) >= 2 else 0.0
     )
     average_return = statistics.mean(returns) if returns else 0.0
-    elapsed_days = _excel_serial(rows[-1].date) - _excel_serial(rows[0].date)
+    elapsed_days = _day_number(rows[-1].date) - _day_number(rows[0].date)
     annualized_return = (
         (rows[-1].nav / rows[0].nav) ** (365 / elapsed_days) - 1
         if elapsed_days
@@ -367,28 +387,6 @@ def run_backtest(
         current_signal="持仓" if rows[-1].signal == 1 else "空仓",
     )
     return rows, summary
-
-
-def load_reference_xlsx(path: str | Path) -> list[PriceBar]:
-    """Load the raw A:E price area from the reference-style workbook."""
-    with zipfile.ZipFile(path) as book:
-        cells = sheet_cells(
-            book, "xl/worksheets/sheet1.xml", shared_strings(book)
-        )
-    bars: list[PriceBar] = []
-    row_number = 6
-    while f"A{row_number}" in cells:
-        bars.append(
-            PriceBar(
-                date=cells[f"A{row_number}"]["value"],
-                open=cells.get(f"B{row_number}", {}).get("value"),
-                high=cells.get(f"C{row_number}", {}).get("value"),
-                low=cells.get(f"D{row_number}", {}).get("value"),
-                close=cells.get(f"E{row_number}", {}).get("value"),
-            )
-        )
-        row_number += 1
-    return bars
 
 
 def _column_name(index: int) -> str:

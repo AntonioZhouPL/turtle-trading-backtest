@@ -13,7 +13,6 @@ try:
         Parameters,
         load_csv,
         load_raw_data_xlsx,
-        load_reference_xlsx,
         run_backtest,
         safe_filename,
         select_instrument,
@@ -24,7 +23,6 @@ except ImportError:  # ``python run_backtest.py ...``
         Parameters,
         load_csv,
         load_raw_data_xlsx,
-        load_reference_xlsx,
         run_backtest,
         safe_filename,
         select_instrument,
@@ -34,7 +32,7 @@ except ImportError:  # ``python run_backtest.py ...``
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Python版海龟回测")
-    parser.add_argument("input", type=Path, help="行情 CSV，或原结构的 xlsx")
+    parser.add_argument("input", type=Path, help="行情 CSV，或 Raw_data xlsx")
     parser.add_argument("-o", "--output", type=Path, default=Path("backtest.csv"))
     parser.add_argument("--symbol", help="Raw_data 中要回测的代码或名称")
     parser.add_argument("--all", action="store_true", help="回测所有标的")
@@ -44,6 +42,11 @@ def main() -> None:
     parser.add_argument("--atr-period", type=int, default=20)
     parser.add_argument("--entry-period", type=int, default=20)
     parser.add_argument("--exit-period", type=int, default=10)
+    parser.add_argument(
+        "--warmup-bars",
+        type=int,
+        help="产生信号前要求的历史行情数；默认取ATR、入场和退出周期的最大值",
+    )
     parser.add_argument("--risk", type=float, default=0.02)
     parser.add_argument("--buy-cost", type=float, default=0.0002)
     parser.add_argument("--sell-cost", type=float, default=0.0007)
@@ -58,6 +61,7 @@ def main() -> None:
         buy_cost_rate=args.buy_cost,
         sell_cost_rate=args.sell_cost,
         initial_cash=args.initial_cash,
+        warmup_bars=args.warmup_bars,
     )
 
     if args.input.suffix.lower() not in {".xlsx", ".xlsm"}:
@@ -67,16 +71,7 @@ def main() -> None:
         print(f"\n明细已写入: {args.output.resolve()}")
         return
 
-    try:
-        instruments = load_raw_data_xlsx(args.input)
-    except ValueError:
-        if args.symbol or args.all or args.list_symbols:
-            raise
-        rows, summary = run_backtest(load_reference_xlsx(args.input), parameters)
-        write_results_csv(rows, args.output)
-        print(json.dumps(asdict(summary), ensure_ascii=False, indent=2, default=str))
-        print(f"\n明细已写入: {args.output.resolve()}")
-        return
+    instruments = load_raw_data_xlsx(args.input)
 
     if args.list_symbols:
         for item in instruments:

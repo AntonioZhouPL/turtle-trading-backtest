@@ -7,9 +7,9 @@ import unittest
 from pathlib import Path
 
 try:
-    from .turtle_backtest import load_raw_data_xlsx, run_backtest
+    from .turtle_backtest import Parameters, load_raw_data_xlsx, run_backtest
 except ImportError:
-    from turtle_backtest import load_raw_data_xlsx, run_backtest
+    from turtle_backtest import Parameters, load_raw_data_xlsx, run_backtest
 
 ROOT = Path(__file__).resolve().parent
 RAW_DATA = ROOT / "data" / "market_data.xlsx"
@@ -37,11 +37,30 @@ class MultiSymbolTest(unittest.TestCase):
             },
         )
 
-    def test_hs300_still_matches_reference_result(self) -> None:
+    def test_hs300_default_result_is_stable(self) -> None:
         instrument = next(
             item for item in self.instruments if item.symbol == "000300.SH"
         )
-        _, summary = run_backtest(instrument.bars)
+        rows, summary = run_backtest(instrument.bars)
+        self.assertTrue(
+            math.isclose(
+                summary.ending_nav,
+                11_817_238.802793043,
+                rel_tol=2e-12,
+                abs_tol=2e-8,
+            )
+        )
+        self.assertEqual((summary.buys, summary.sells), (120, 120))
+        self.assertTrue(all(row.past_high is None for row in rows[:20]))
+        self.assertIsNotNone(rows[20].past_high)
+
+    def test_51_bar_compatibility_warmup_reproduces_legacy_result(self) -> None:
+        instrument = next(
+            item for item in self.instruments if item.symbol == "000300.SH"
+        )
+        _, summary = run_backtest(
+            instrument.bars, Parameters(warmup_bars=51)
+        )
         self.assertTrue(
             math.isclose(
                 summary.ending_nav,

@@ -1,4 +1,4 @@
-# 海龟交易法则回测：Python 版
+# 海龟交易法则回测 / Turtle Trading Backtest
 
 [中文](#中文版) | [English](#english-version)
 
@@ -6,70 +6,65 @@
 
 ## 中文版
 
-本目录是海龟交易回测的 Python 实现。核心策略按原 Excel 回测表的公式顺序移植，同时支持：
+这是一个以原始 OHLC 行情为唯一数据输入的 Python 海龟回测项目。
 
-- 原版单标的回测工作簿；
-- 包含多组 OHLC 数据的 `Raw_data` 工作簿；
-- 标准 OHLC CSV；
-- 单标的或全部标的批量回测；
-- 逐日交易明细、绩效汇总；
-- Jupyter Notebook 净值和收盘价图表。
+TR、ATR、唐奇安通道、突破/退出、成交价、止损、风险仓位、交易成本、现金、NAV 和绩效指标的计算顺序，来自此前经过 Excel 回测验证的逻辑；但 Python 策略引擎不读取 Excel 公式、缓存结果、单元格地址或工作表行号。
 
-### 回测净值总览
+换句话说：
 
-下图比较了原始数据中全部 9 个标的应用同一套海龟规则后的实际 NAV：
+> 保留经 Excel 验证的交易规则，移除 Excel 工作表布局对策略的控制。
+
+### NAV 总览
+
+下图比较原始数据中全部 9 个标的使用同一套海龟规则后的实际 NAV：
 
 ![9个标的海龟策略NAV对比](charts/turtle_nav_comparison.png)
 
-回测核心仅使用 Python 标准库。绘图 Notebook 额外使用 Jupyter、pandas 和 matplotlib。
+## 项目结构
 
-如需运行 Notebook，安装绘图依赖：
+```text
+turtle-trading-backtest/
+├── data/
+│   ├── market_data.xlsx         # 5个指数和4只美股的 Raw Data
+│   └── README.md                # 数据说明
+├── charts/
+│   └── turtle_nav_comparison.png
+├── outputs/                     # 本地生成结果，默认不提交
+├── turtle_backtest.py           # 海龟策略、账户和绩效计算
+├── run_backtest.py              # 命令行入口
+├── inspect_workbook.py          # Raw Data xlsx 的只读 XML 工具
+├── index_nav_vs_close.ipynb     # 回测图表 Notebook
+├── test_strategy.py             # 策略规则和无未来数据测试
+├── test_multisymbol.py          # 9标的回归测试
+├── requirements-notebook.txt    # Notebook 依赖
+└── README.md
+```
+
+回测核心仅依赖 Python 标准库。运行 Notebook 需要：
 
 ```bash
 python3 -m pip install -r requirements-notebook.txt
 ```
 
-## 目录结构
+## 数据输入
 
-```text
-turtle-trading-backtest/
-├── data/
-│   ├── market_data.xlsx         # 9个标的的示例 OHLC 数据
-│   └── README.md                # 数据说明
-├── charts/
-│   └── turtle_nav_comparison.png
-├── outputs/                     # 本地运行结果，不提交 Git
-├── run_backtest.py              # 命令行入口
-├── turtle_backtest.py           # 数据读取、海龟公式、账户和指标
-├── inspect_workbook.py          # 直接读取 xlsx 内部 XML
-├── index_nav_vs_close.ipynb     # NAV / Close 图表
-├── requirements-notebook.txt    # Notebook 绘图依赖
-├── test_multisymbol.py          # 多标的回归测试
-├── test_parity.py               # 可选的 Excel 公式缓存对账
-└── README.md
-```
+项目支持两种输入。
 
-仓库已包含多标的示例数据：
+### 1. Raw Data xlsx
+
+仓库自带：
 
 ```text
 data/market_data.xlsx
 ```
 
-原版单标的 Excel 不随仓库提交。如需运行逐单元格对账，可自行放置为 `data/reference_workbook.xlsx`。
+程序在工作表中横向识别连续五列：
 
-## 快速开始
-
-所有命令均在克隆后的仓库根目录 `turtle-trading-backtest` 执行。
-
-### 查看工作簿中的全部标的
-
-```bash
-python3 run_backtest.py \
-  "data/market_data.xlsx" \
-  --list-symbols
+```text
+Date | open | high | low | close
 ```
 
-当前工作簿包含 9 个标的：
+每个五列块代表一个标的。当前文件包含：
 
 | 代码 | 名称 | 类型 |
 |---|---|---|
@@ -78,39 +73,54 @@ python3 run_backtest.py \
 | `000905.SH` | 中证500 | 指数 |
 | `000852.SH` | 中证1000 | 指数 |
 | `932000.CSI` | 中证2000 | 指数 |
-| `MSFT.O` | 微软（MICROSOFT） | 股票 |
-| `NVDA.O` | 英伟达（NVIDIA） | 股票 |
-| `GOOGL.O` | 谷歌（ALPHABET）-A | 股票 |
-| `AAPL.O` | 苹果（APPLE） | 股票 |
+| `MSFT.O` | 微软 | 股票 |
+| `NVDA.O` | 英伟达 | 股票 |
+| `GOOGL.O` | 谷歌-A | 股票 |
+| `AAPL.O` | 苹果 | 股票 |
+
+对于上市较晚的标的，从第一条完整且为正数的 OHLC 开始建立自己的时间序列。
+
+### 2. CSV
+
+CSV 必须包含：
+
+```text
+Date,open,high,low,close
+```
+
+表头大小写不敏感。日期支持 ISO 日期或电子表格日期序列值。
+
+## 快速开始
+
+所有命令均在仓库根目录执行。
+
+### 查看标的
+
+```bash
+python3 run_backtest.py data/market_data.xlsx --list-symbols
+```
 
 ### 回测单个标的
 
-可以通过代码或名称选择标的：
-
 ```bash
 python3 run_backtest.py \
-  "data/market_data.xlsx" \
+  data/market_data.xlsx \
   --symbol 000905.SH \
   -o outputs/csi500.csv
 ```
 
-程序会：
+如果不指定 `--symbol`，Raw Data xlsx 默认选择 `000300.SH`。
 
-1. 在终端打印该标的的 JSON 汇总指标；
-2. 将完整逐日回测明细写入 `outputs/csi500.csv`。
-
-如果不传 `--symbol`，多标的工作簿默认选择 `000300.SH`（沪深300）。
-
-### 批量回测全部标的
+### 回测全部标的
 
 ```bash
 python3 run_backtest.py \
-  "data/market_data.xlsx" \
+  data/market_data.xlsx \
   --all \
   -o outputs
 ```
 
-批量模式输出：
+批量模式生成：
 
 ```text
 outputs/
@@ -121,99 +131,55 @@ outputs/
 └── summary.csv
 ```
 
-每个标的一份逐日明细，`summary.csv` 汇总所有标的的绩效指标。`outputs/` 中的生成结果默认被 Git 忽略。
-
-### 回测原版单标的 Excel
-
-先将原版工作簿放到 `data/reference_workbook.xlsx`，再运行：
-
-```bash
-python3 run_backtest.py \
-  "data/reference_workbook.xlsx" \
-  -o outputs/backtest_result.csv
-```
-
 ### 回测 CSV
 
 ```bash
 python3 run_backtest.py \
-  "path/to/prices.csv" \
+  path/to/prices.csv \
   -o outputs/backtest_result.csv
 ```
 
-CSV 表头必须包含：
+## 默认参数
 
-```text
-Date,open,high,low,close
-```
+| 参数 | 命令行参数 | 默认值 |
+|---|---|---:|
+| ATR 周期 | `--atr-period` | 20 |
+| 入场通道 | `--entry-period` | 20 |
+| 退出通道 | `--exit-period` | 10 |
+| 预热行情数 | `--warmup-bars` | 自动 |
+| 风险比例 | `--risk` | 2% |
+| 买入成本率 | `--buy-cost` | 0.02% |
+| 卖出成本率 | `--sell-cost` | 0.07% |
+| 初始资金 | `--initial-cash` | 1,000,000 |
+| 最小交易单位 | 代码参数 | 100 |
 
-表头大小写不敏感。日期支持：
-
-- ISO 日期，例如 `2026-07-28`；
-- Excel 日期序列值，例如 `46231`。
-
-空白 OHLC 会读取为缺失值；回测过程中，无效或小于等于零的价格使用前一日对应清洗价格向前填充。
-
-## 默认回测参数
-
-| 参数 | 命令行参数 | 默认值 | 含义 |
-|---|---|---:|---|
-| ATR 周期 | `--atr-period` | 20 | ATR 指数平滑周期 |
-| 入场周期 | `--entry-period` | 20 | 前 N 日最高价通道 |
-| 退出周期 | `--exit-period` | 10 | 前 N 日最低价通道 |
-| 单次风险比例 | `--risk` | 0.02 | NAV 的 2% |
-| 买入成本率 | `--buy-cost` | 0.0002 | 0.02% |
-| 卖出成本率 | `--sell-cost` | 0.0007 | 0.07% |
-| 初始资金 | `--initial-cash` | 1,000,000 | 初始账户 NAV |
-| 最小交易单位 | 代码参数 | 100 | 仓位向下取整到整手 |
-| 首个信号行 | 代码参数 | Excel 第57行 | 与原回测表保持一致 |
-
-查看完整命令行帮助：
+完整帮助：
 
 ```bash
 python3 run_backtest.py --help
 ```
 
-## 数据读取逻辑
+## 价格清洗
 
-### 原版单标的工作簿
+每个 OHLC 值先转换为数字：
 
-`load_reference_xlsx()` 从 `sheet1` 的第 6 行开始读取：
+- 大于 0：保留；
+- 空值、非数字或小于等于 0：视为缺失；
+- 非首日缺失值：使用前一日相同字段的清洗值向前填充。
 
-```text
-A列 Date
-B列 Open
-C列 High
-D列 Low
-E列 Close
-```
+策略公式使用 `Clean Open/High/Low/Close`，原始 OHLC 同时保留在输出中。
 
-### Raw_data 多标的工作簿
+## 策略公式
 
-`load_raw_data_xlsx()` 横向搜索连续的五列数据块：
+所有核心公式位于：
 
 ```text
-Date | open | high | low | close
+turtle_backtest.py → run_backtest()
 ```
-
-表头位于第 5 行，标的名称和代码分别从数据块第二列的第 2、3 行读取。对于上市较晚的标的，从第一条 OHLC 全部有效且大于零的记录开始计算自己的预热期。
-
-Excel 文件通过 `zipfile` 和 XML 直接读取，不需要安装或启动 Microsoft Excel。
-
-## 海龟策略公式
-
-所有核心计算集中在：
-
-```python
-turtle_backtest.py
-run_backtest()
-```
-
-逐日计算只引用当日及以前的数据。
 
 ### 1. TR
 
-首日：
+首条行情：
 
 ```text
 TR = High - Low
@@ -231,7 +197,7 @@ TR(t) = MAX(
 
 ### 2. ATR
 
-首日以 TR 初始化，之后使用指数平滑：
+首日以 TR 初始化，之后采用与原回测一致的指数平滑：
 
 ```text
 ATR(t) =
@@ -239,20 +205,43 @@ ATR(t) =
 + (N - 1) / (N + 1) × ATR(t-1)
 ```
 
-默认 `N=20`。这不是简单移动平均，也不同于使用 `1/N` 权重的 Wilder ATR。
+默认 `N=20`。
 
-### 3. 唐奇安通道
+### 3. 参数驱动的预热
+
+默认预热期不再引用 Excel 行号，而是：
 
 ```text
-Past High(t) = 当日之前20个交易日的最高价
-Past Low(t)  = 当日之前10个交易日的最低价
+Required History =
+MAX(ATR Period, Entry Period, Exit Period)
 ```
 
-当日不包含在通道窗口中，避免使用未来数据。
+默认参数下：
 
-为与原 Excel 对齐，第一条行情对应 Excel 第 6 行，第 57 行开始允许产生交易信号。
+```text
+MAX(20, 20, 10) = 20
+```
 
-### 4. 入场与退出
+因此先完成20条历史行情，从第21条行情开始计算信号。
+
+如需复现旧回测表“先预热51条行情”的实验口径，可以显式指定：
+
+```bash
+--warmup-bars 51
+```
+
+这是兼容参数，不是 Excel 行号。
+
+### 4. 唐奇安通道
+
+```text
+Past High(t) = t之前20个交易日 Clean High 的最大值
+Past Low(t)  = t之前10个交易日 Clean Low 的最小值
+```
+
+当前行情不进入自己的通道，避免未来数据。
+
+### 5. 入场与退出
 
 空仓时：
 
@@ -267,143 +256,114 @@ Exit Level(t) = MAX(Past Low(t), Stop Loss(t-1))
 Low(t) < Exit Level(t) → 全部卖出
 ```
 
-判断使用严格不等式。价格刚好等于通道或退出线时，不触发交易。
+使用严格不等式：刚好等于通道价格不会触发交易。
 
-### 5. 成交价格
-
-```text
-买入价 = MAX(Open(t), Past High(t))
-
-退出线 = MAX(Past Low(t), Stop Loss(t-1))
-卖出价 = MIN(Open(t), 退出线)
-```
-
-这样能够反映突破或退出当天的跳空：
-
-- 跳空高开突破时，按较高的开盘价买入；
-- 跳空低开退出时，按较低的开盘价卖出。
-
-### 6. 止损
+### 6. 成交价格
 
 ```text
-Stop Loss = 买入成交价 - 前一日 ATR
+Buy Price = MAX(Open(t), Past High(t))
+
+Exit Level = MAX(Past Low(t), Stop Loss(t-1))
+Sell Price = MIN(Open(t), Exit Level)
 ```
 
-止损在建仓时确定，持仓期间保持不变，平仓后清空。
+这会反映突破和退出时的开盘跳空。
 
-### 7. 仓位
+### 7. 止损
 
 ```text
-风险限制股数 = 前一日 NAV × 风险比例 / 前一日 ATR
-
-现金限制股数 =
-前一日现金 / [买入价 × (1 + 买入成本率)]
-
-实际仓位 =
-MIN(风险限制股数, 现金限制股数)
-再向下取整到100股
+Stop Loss = Buy Price - ATR(t-1)
 ```
 
-当前策略一次性建仓、一次性清仓，不进行加仓或减仓。
+止损在建仓时确定，持仓期间固定，平仓后清空。
 
-### 8. 现金与净值
+### 8. 仓位
 
 ```text
-仓位变化 = 当日仓位 - 前日仓位
+Risk-limited Shares =
+NAV(t-1) × Risk Fraction / ATR(t-1)
 
-现金 =
-前日现金
-- 仓位变化 × 成交价
-- ABS(仓位变化) × 成交价 × 交易成本率
+Cash-limited Shares =
+Cash(t-1) / [Buy Price × (1 + Buy Cost Rate)]
 
-股票市值 = 当日仓位 × 当日清洗收盘价
-NAV = 现金 + 股票市值
+Position =
+MIN(Risk-limited Shares, Cash-limited Shares)
+向下取整到100股
 ```
 
-买入使用买入成本率，卖出使用卖出成本率。
+### 9. 现金和 NAV
 
-## 当前策略边界
+```text
+Position Change = Position(t) - Position(t-1)
 
-当前实现是原 Excel 的单标的、只做多版本，并非经典海龟组合系统的全部规则：
+Cash(t) =
+Cash(t-1)
+- Position Change × Trade Price
+- ABS(Position Change) × Trade Price × Cost Rate
 
-- 只做多，不做空；
+Stock Value(t) = Position(t) × Clean Close(t)
+NAV(t) = Cash(t) + Stock Value(t)
+```
+
+## 策略边界
+
+当前版本严格保留原回测中实际使用的规则：
+
+- 只做多；
 - 一次性建仓和全部平仓；
-- 没有每上涨 `0.5N` 加仓；
-- 没有最多四个 Unit 的限制；
-- 没有 System 1 / System 2 双系统；
-- 没有品种相关性和组合风险限制；
-- 止损距离为 1 ATR，持仓期间不移动。
+- 没有 `0.5N` 加仓；
+- 没有四 Unit 上限；
+- 没有 System 1 / System 2；
+- 没有组合相关性控制；
+- 使用固定 1 ATR 止损。
 
-准确地说，当前策略是：
+准确描述是：
 
-> 前20日高点突破入场 + 前10日低点或1 ATR固定止损退出 + 2%风险仓位。
+> 前20日高点突破入场，前10日低点或固定1 ATR止损退出，按NAV的2%风险预算确定仓位。
 
-## 输出字段
+## 输出
 
-逐日明细包含：
+逐日 CSV 包含：
 
 | 分类 | 字段 |
 |---|---|
 | 原始价格 | `Date`, `open`, `high`, `low`, `close` |
 | 清洗价格 | `Clean Open`, `Clean High`, `Clean Low`, `Clean Close` |
-| 波动与通道 | `TR`, `ATR`, `Past High`, `Past Low` |
-| 信号与交易 | `Signal`, `Trade Price`, `Stop Loss`, `Trade` |
+| 波动和通道 | `TR`, `ATR`, `Past High`, `Past Low` |
+| 交易 | `Signal`, `Trade Price`, `Stop Loss`, `Trade` |
 | 账户 | `Position`, `Cash`, `Stock Value`, `Trading Cost` |
 | 绩效 | `Daily P&L`, `NAV`, `Daily Return`, `Drawdown` |
-| 对比曲线 | `NAV Index`, `Close Index` |
-
-其中：
+| 对比序列 | `NAV Index`, `Close Index` |
 
 ```text
-NAV Index = NAV / 初始资金 × 100
-Close Index = Clean Close / 首日 Clean Close × 100
+NAV Index = NAV / Initial Cash × 100
+Close Index = Clean Close / First Clean Close × 100
 ```
 
-二者单位一致、都从 100 起步，适合直接比较策略与买入持有的累计表现。
+## 绩效指标
 
-## 汇总指标口径
-
-`Summary` 和批量模式的 `summary.csv` 包含：
-
-- `ending_nav`：期末净值；
-- `total_return`：总收益率；
-- `annualized_return`：复合年化收益率；
-- `max_drawdown`：最大回撤；
-- `annualized_volatility`：年化波动率；
-- `sharpe_ratio`：夏普比率；
-- `buys` / `sells`：买入和卖出次数；
-- `time_in_market`：信号处于持仓状态的时间比例；
-- `ending_position`：期末仓位；
-- `total_trading_cost`：累计交易成本；
-- `minimum_cash`：历史最低现金；
-- `current_signal`：期末持仓状态；
-- `nav_check`：检查期末 NAV 是否等于现金加股票市值。
-
-### 年化收益率
-
-年化收益率是复合年化收益率 CAGR，不是各年收益率的算术平均：
+复合年化收益率：
 
 ```text
-年化收益率 =
-(期末 NAV / 期初 NAV) ^ (365 / 实际自然日数) - 1
+CAGR =
+(Ending NAV / Starting NAV) ^ (365 / Calendar Days) - 1
 ```
 
-### 年化波动率
+年化波动率：
 
 ```text
-年化波动率 = 每日收益率样本标准差 × SQRT(252)
+Daily Return Sample StdDev × SQRT(252)
 ```
 
-### 夏普比率
+夏普比率：
 
 ```text
-夏普比率 =
-平均日收益率 × 252 / 年化波动率
+Mean Daily Return × 252 / Annualized Volatility
 ```
 
-当前计算没有扣除无风险利率，相当于无风险利率为 0。
+当前夏普比率假设无风险利率为 0。
 
-## 图表 Notebook
+## Notebook
 
 打开：
 
@@ -411,289 +371,138 @@ Close Index = Clean Close / 首日 Clean Close × 100
 index_nav_vs_close.ipynb
 ```
 
-Notebook 默认读取：
+Notebook 直接调用 `turtle_backtest.py`，默认读取 `data/market_data.xlsx`，并绘制：
 
-```text
-data/market_data.xlsx
-```
+- 每个标的的实际 NAV（左轴）与 Close（右轴）；
+- 9个标的的实际 NAV 总览；
+- 绩效汇总表。
 
-并回测原数据中的全部 9 个标的。
+横轴主刻度固定为每年4月5日。
 
-Notebook 包含：
-
-1. 工作簿标的清单；
-2. 全部标的回测；
-3. 每个标的的双纵轴图；
-4. 9个标的的实际 NAV 对比图；
-5. 回测指标汇总表。
-
-单标的双轴图：
-
-- 左轴：实际 NAV 金额；
-- 右轴：标的实际 Close；
-- 用于观察走势和时间拐点，不应通过两条线的视觉高度比较收益率。
-
-如果需要严格比较策略与标的收益率，应使用逐日结果中的 `NAV Index` 和 `Close Index`，因为二者都标准化为 100。
-
-所有图表的横轴主刻度固定为每年 4 月 5 日，例如：
-
-```text
-2005/4/5, 2006/4/5, ..., 2026/4/5
-```
-
-修改 Notebook 中的 `SELECTED_SYMBOLS` 可以增减标的。将：
-
-```python
-SAVE_CHARTS = True
-```
-
-即可把图表保存到：
-
-```text
-charts/
-```
+双轴图只能比较走势和拐点。要严格比较收益，应使用同样从100开始的 `NAV Index` 和 `Close Index`。
 
 ## 测试
 
-在项目根目录运行：
-
 ```bash
-python3 -m unittest -v \
-  test_multisymbol \
-  test_parity
+python3 -m unittest -v test_strategy test_multisymbol
 ```
 
-`test_multisymbol` 验证：
+测试覆盖：
 
-- 正确识别全部 9 个标的；
-- 所有标的均可完成回测；
-- 每个标的的 `nav_check` 均为 `PASS`；
-- 沪深300关键回测结果保持稳定。
-
-`test_parity` 用于对比原 Excel 保存的逐日公式缓存：
-
-- 5,152 行；
-- 22 个逐日计算字段；
-- 14 个汇总指标。
-
-如果没有提供 `data/reference_workbook.xlsx`，或工作簿没有保存公式计算缓存，该项测试会主动跳过；这不代表 Python 回测失败。
-
-## 主要代码入口
-
-| 功能 | 文件 / 函数 |
-|---|---|
-| 命令行调度 | `run_backtest.py: main()` |
-| 核心策略 | `turtle_backtest.py: run_backtest()` |
-| CSV 读取 | `turtle_backtest.py: load_csv()` |
-| 单标的 Excel | `turtle_backtest.py: load_reference_xlsx()` |
-| 多标的 Excel | `turtle_backtest.py: load_raw_data_xlsx()` |
-| 标的选择 | `turtle_backtest.py: select_instrument()` |
-| 明细 CSV 输出 | `turtle_backtest.py: write_results_csv()` |
-| Excel XML 读取 | `inspect_workbook.py: sheet_cells()` |
+- 预热期由参数自动决定；
+- 通道只使用已完成的历史行情；
+- 严格突破规则；
+- 添加未来行情不会改变历史结果；
+- 自定义预热期参数验证；
+- 51条兼容预热复现旧回测结果；
+- 9个标的全部完成且账户平衡；
+- 默认回测结果回归检查。
 
 ---
 
 <a id="english-version"></a>
 
-# Turtle Trading Backtest: Python Version
+## English version
 
-[中文](#中文版) | [English](#english-version)
+This is a Python Turtle Trading backtest driven exclusively by raw OHLC market data.
 
-This directory contains a Python implementation of the Turtle Trading backtest. The core strategy follows the calculation order of the original Excel workbook and supports:
+The calculation order for TR, ATR, Donchian channels, entry/exit decisions, execution prices, stops, risk sizing, costs, cash, NAV, and performance metrics comes from the previously validated Excel model. The Python engine does not read spreadsheet formulas, cached results, cell addresses, or worksheet row numbers.
 
-- the original single-instrument workbook;
-- multi-instrument `Raw_data` workbooks;
-- standard OHLC CSV files;
-- single-instrument and batch backtests;
-- daily trade details and performance summaries;
-- Jupyter charts for NAV and closing prices.
+In short:
+
+> Keep the trading rules validated in Excel; remove spreadsheet layout from strategy control.
 
 ### NAV overview
 
-The chart below compares actual NAV across all 9 source instruments using the same Turtle rules:
-
 ![Turtle strategy NAV comparison across 9 instruments](charts/turtle_nav_comparison.png)
 
-The backtest engine uses only the Python standard library. The notebook additionally requires Jupyter, pandas, and matplotlib.
+## Structure
 
-To run the notebook, install its charting dependencies:
+```text
+turtle-trading-backtest/
+├── data/market_data.xlsx
+├── charts/turtle_nav_comparison.png
+├── outputs/
+├── turtle_backtest.py
+├── run_backtest.py
+├── inspect_workbook.py
+├── index_nav_vs_close.ipynb
+├── test_strategy.py
+├── test_multisymbol.py
+├── requirements-notebook.txt
+└── README.md
+```
+
+The core engine uses only the Python standard library. For the notebook:
 
 ```bash
 python3 -m pip install -r requirements-notebook.txt
 ```
 
-## Project structure
+## Inputs
 
-```text
-turtle-trading-backtest/
-├── data/
-│   ├── market_data.xlsx         # Example OHLC data for 9 instruments
-│   └── README.md                # Data notes
-├── charts/
-│   └── turtle_nav_comparison.png
-├── outputs/                     # Local generated results, ignored by Git
-├── run_backtest.py              # Command-line entry point
-├── turtle_backtest.py           # Loaders, strategy, account, and metrics
-├── inspect_workbook.py          # Direct xlsx XML reader
-├── index_nav_vs_close.ipynb     # NAV and Close charts
-├── requirements-notebook.txt    # Notebook charting dependencies
-├── test_multisymbol.py          # Multi-instrument regression tests
-├── test_parity.py               # Optional Excel formula-cache parity test
-└── README.md
-```
+Supported inputs:
 
-The repository includes the multi-instrument example data:
+1. a Raw Data xlsx containing repeated `Date | open | high | low | close` blocks;
+2. a CSV containing `Date,open,high,low,close`.
 
-```text
-data/market_data.xlsx
-```
-
-The original single-instrument workbook is not committed. To run cell-by-cell parity checks, provide it locally as `data/reference_workbook.xlsx`.
+The bundled `data/market_data.xlsx` contains five indices and four US stocks. Strategy calculations use raw OHLC values only—not workbook formulas or calculated cells.
 
 ## Quick start
 
-Run all commands from the cloned `turtle-trading-backtest` repository root.
-
-### List all instruments
-
 ```bash
+# List instruments
+python3 run_backtest.py data/market_data.xlsx --list-symbols
+
+# Backtest one instrument
 python3 run_backtest.py \
-  "data/market_data.xlsx" \
-  --list-symbols
-```
-
-The workbook currently contains 9 instruments:
-
-| Symbol | Name | Type |
-|---|---|---|
-| `000300.SH` | CSI 300 | Index |
-| `8841431.WI` | Wind Micro-cap Index | Index |
-| `000905.SH` | CSI 500 | Index |
-| `000852.SH` | CSI 1000 | Index |
-| `932000.CSI` | CSI 2000 | Index |
-| `MSFT.O` | Microsoft | Stock |
-| `NVDA.O` | NVIDIA | Stock |
-| `GOOGL.O` | Alphabet Class A | Stock |
-| `AAPL.O` | Apple | Stock |
-
-### Backtest one instrument
-
-Select an instrument by symbol or name:
-
-```bash
-python3 run_backtest.py \
-  "data/market_data.xlsx" \
+  data/market_data.xlsx \
   --symbol 000905.SH \
   -o outputs/csi500.csv
-```
 
-The program prints summary metrics as JSON and writes the complete daily results to the output CSV. If `--symbol` is omitted, a multi-instrument workbook defaults to `000300.SH`.
-
-### Backtest all instruments
-
-```bash
+# Backtest all instruments
 python3 run_backtest.py \
-  "data/market_data.xlsx" \
+  data/market_data.xlsx \
   --all \
   -o outputs
 ```
 
-Batch mode creates one daily-detail CSV per instrument and a combined `summary.csv`. Generated files under `outputs/` are ignored by Git:
-
-```text
-outputs/
-├── 000300.SH_沪深300.csv
-├── 000905.SH_中证500.csv
-├── ...
-├── AAPL.O_苹果(APPLE).csv
-└── summary.csv
-```
-
-### Backtest the original single-instrument workbook
-
-First place the original workbook at `data/reference_workbook.xlsx`, then run:
-
-```bash
-python3 run_backtest.py \
-  "data/reference_workbook.xlsx" \
-  -o outputs/backtest_result.csv
-```
-
-### Backtest a CSV file
-
-```bash
-python3 run_backtest.py \
-  "path/to/prices.csv" \
-  -o outputs/backtest_result.csv
-```
-
-The CSV header must contain:
-
-```text
-Date,open,high,low,close
-```
-
-Header matching is case-insensitive. Dates may be ISO dates such as `2026-07-28` or Excel serial values such as `46231`. Blank OHLC cells are loaded as missing values. During the backtest, invalid or non-positive prices are forward-filled from the previous cleaned value for the same field.
-
 ## Default parameters
 
-| Parameter | CLI option | Default | Meaning |
-|---|---|---:|---|
-| ATR period | `--atr-period` | 20 | ATR exponential-smoothing period |
-| Entry period | `--entry-period` | 20 | Previous N-day high channel |
-| Exit period | `--exit-period` | 10 | Previous N-day low channel |
-| Risk fraction | `--risk` | 0.02 | 2% of NAV |
-| Buy cost rate | `--buy-cost` | 0.0002 | 0.02% |
-| Sell cost rate | `--sell-cost` | 0.0007 | 0.07% |
-| Initial cash | `--initial-cash` | 1,000,000 | Initial account NAV |
-| Lot size | Code parameter | 100 | Position rounded down to whole lots |
-| First signal row | Code parameter | Excel row 57 | Matches the original workbook |
+| Parameter | CLI option | Default |
+|---|---|---:|
+| ATR period | `--atr-period` | 20 |
+| Entry period | `--entry-period` | 20 |
+| Exit period | `--exit-period` | 10 |
+| Warm-up bars | `--warmup-bars` | Automatic |
+| Risk fraction | `--risk` | 2% |
+| Buy cost | `--buy-cost` | 0.02% |
+| Sell cost | `--sell-cost` | 0.07% |
+| Initial cash | `--initial-cash` | 1,000,000 |
+| Lot size | Code parameter | 100 |
 
-Display all CLI options with:
+## Python-native warm-up
+
+By default:
+
+```text
+Required History =
+MAX(ATR Period, Entry Period, Exit Period)
+```
+
+With the default parameters, signals begin after 20 completed historical bars.
+
+To reproduce the legacy experiment with 51 completed warm-up bars:
 
 ```bash
-python3 run_backtest.py --help
+--warmup-bars 51
 ```
 
-## Data loading
+This is an explicit compatibility parameter, not a worksheet row number.
 
-### Original single-instrument workbook
+## Strategy formulas
 
-`load_reference_xlsx()` reads from row 6 of `sheet1`:
-
-```text
-Column A: Date
-Column B: Open
-Column C: High
-Column D: Low
-Column E: Close
-```
-
-### Multi-instrument Raw_data workbook
-
-`load_raw_data_xlsx()` scans horizontally for consecutive blocks:
-
-```text
-Date | open | high | low | close
-```
-
-Headers are on row 5. The instrument name and symbol are read from rows 2 and 3 of the block's second column. A later-listed instrument starts at its first row where all OHLC values are valid and positive, followed by its own warm-up period.
-
-Excel files are read directly through `zipfile` and XML parsing. Microsoft Excel does not need to be installed or running.
-
-## Turtle strategy formulas
-
-All core calculations are implemented in `turtle_backtest.py: run_backtest()`. Daily calculations only use information available on or before the current date.
-
-### 1. True Range
-
-First day:
-
-```text
-TR = High - Low
-```
-
-Thereafter:
+### True Range
 
 ```text
 TR(t) = MAX(
@@ -703,9 +512,9 @@ TR(t) = MAX(
 )
 ```
 
-### 2. ATR
+The first TR is `High - Low`.
 
-ATR is initialized with the first TR and then exponentially smoothed:
+### ATR
 
 ```text
 ATR(t) =
@@ -713,218 +522,96 @@ ATR(t) =
 + (N - 1) / (N + 1) × ATR(t-1)
 ```
 
-The default is `N=20`. This is not a simple moving average or Wilder's `1/N` smoothing formula.
-
-### 3. Donchian channels
+### Channels
 
 ```text
-Past High(t) = highest price over the 20 trading days before t
-Past Low(t)  = lowest price over the 10 trading days before t
+Past High(t) = highest Clean High over the 20 bars before t
+Past Low(t)  = lowest Clean Low over the 10 bars before t
 ```
 
-The current day is excluded, preventing look-ahead bias. To match the original workbook, the first observation corresponds to Excel row 6 and signals begin on row 57.
+The current bar is excluded.
 
-### 4. Entry and exit
-
-While flat:
+### Entry and exit
 
 ```text
 High(t) > Past High(t) → Buy
-```
 
-While long:
-
-```text
 Exit Level(t) = MAX(Past Low(t), Stop Loss(t-1))
-Low(t) < Exit Level(t) → Sell the entire position
+Low(t) < Exit Level(t) → Sell all
 ```
 
-Both use strict inequalities. Equality does not trigger a trade.
+Both are strict inequalities.
 
-### 5. Execution prices
+### Execution
 
 ```text
 Buy Price = MAX(Open(t), Past High(t))
-
-Exit Level = MAX(Past Low(t), Stop Loss(t-1))
-Sell Price = MIN(Open(t), Exit Level)
+Sell Price = MIN(Open(t), Exit Level(t))
 ```
 
-An upside opening gap is bought at the higher open. A downside opening gap is sold at the lower open.
-
-### 6. Stop loss
+### Stop
 
 ```text
-Stop Loss = Buy Price - Previous-day ATR
+Stop Loss = Buy Price - ATR(t-1)
 ```
 
-The stop is fixed when the position opens, remains unchanged while holding, and is cleared after exit.
+The stop remains fixed while the position is open.
 
-### 7. Position sizing
+### Position sizing
 
 ```text
 Risk-limited Shares =
-Previous-day NAV × Risk Fraction / Previous-day ATR
+NAV(t-1) × Risk Fraction / ATR(t-1)
 
 Cash-limited Shares =
-Previous-day Cash / [Buy Price × (1 + Buy Cost Rate)]
+Cash(t-1) / [Buy Price × (1 + Buy Cost Rate)]
 
-Actual Position =
+Position =
 MIN(Risk-limited Shares, Cash-limited Shares)
 rounded down to the nearest 100 shares
 ```
 
-The strategy enters once and exits the full position. It does not pyramid or scale out.
-
-### 8. Cash and NAV
+### Account
 
 ```text
-Position Change = Current Position - Previous Position
-
-Cash =
-Previous Cash
+Cash(t) =
+Cash(t-1)
 - Position Change × Trade Price
-- ABS(Position Change) × Trade Price × Trading Cost Rate
+- ABS(Position Change) × Trade Price × Cost Rate
 
-Stock Value = Current Position × Current Clean Close
-NAV = Cash + Stock Value
+Stock Value(t) = Position(t) × Clean Close(t)
+NAV(t) = Cash(t) + Stock Value(t)
 ```
-
-Purchases use the buy cost rate and sales use the sell cost rate.
 
 ## Strategy scope
 
-This is the long-only, single-instrument system from the original Excel model, not the complete classic Turtle portfolio system:
+The implemented strategy is long-only, enters once, exits the full position, uses a fixed 1-ATR stop, and does not implement pyramiding, shorting, dual systems, or portfolio correlation limits.
 
-- long only;
-- one entry and one full exit;
-- no additional unit every `0.5N`;
-- no four-unit maximum;
-- no separate System 1 and System 2;
-- no portfolio correlation or aggregate risk limits;
-- a fixed 1-ATR stop with no trailing adjustment.
-
-In concise terms:
-
-> Enter above the previous 20-day high; exit below the previous 10-day low or a fixed 1-ATR stop; size the position with a 2% NAV risk budget.
-
-## Daily output
-
-| Category | Fields |
-|---|---|
-| Raw prices | `Date`, `open`, `high`, `low`, `close` |
-| Cleaned prices | `Clean Open`, `Clean High`, `Clean Low`, `Clean Close` |
-| Volatility and channels | `TR`, `ATR`, `Past High`, `Past Low` |
-| Signals and trades | `Signal`, `Trade Price`, `Stop Loss`, `Trade` |
-| Account | `Position`, `Cash`, `Stock Value`, `Trading Cost` |
-| Performance | `Daily P&L`, `NAV`, `Daily Return`, `Drawdown` |
-| Comparison series | `NAV Index`, `Close Index` |
-
-The comparison series are:
+## Metrics
 
 ```text
-NAV Index = NAV / Initial Cash × 100
-Close Index = Clean Close / First Clean Close × 100
-```
+CAGR =
+(Ending NAV / Starting NAV) ^ (365 / Calendar Days) - 1
 
-Both start at 100 and use the same unit, so they can be directly compared as cumulative performance series.
-
-## Summary metrics
-
-The summary includes ending NAV, cumulative return, annualized return, maximum drawdown, annualized volatility, Sharpe ratio, trade counts, time in market, ending position, total transaction cost, minimum cash, current signal, and a NAV balance check.
-
-### Annualized return
-
-Annualized return is CAGR, not the arithmetic average of yearly returns:
-
-```text
-Annualized Return =
-(Ending NAV / Starting NAV) ^ (365 / Elapsed Calendar Days) - 1
-```
-
-### Annualized volatility
-
-```text
 Annualized Volatility =
-Sample Standard Deviation of Daily Returns × SQRT(252)
-```
+Daily Return Sample StdDev × SQRT(252)
 
-### Sharpe ratio
-
-```text
 Sharpe Ratio =
 Mean Daily Return × 252 / Annualized Volatility
 ```
 
-No risk-free rate is deducted, which is equivalent to assuming a zero risk-free rate.
+The Sharpe ratio assumes a zero risk-free rate.
 
-## Charting notebook
+## Notebook
 
-Open:
+`index_nav_vs_close.ipynb` calls the same strategy engine and reads `data/market_data.xlsx`. It contains dual-axis NAV/Close charts, a nine-instrument NAV comparison, and a performance table.
 
-```text
-index_nav_vs_close.ipynb
-```
-
-The notebook reads `data/market_data.xlsx` by default and backtests all 9 instruments. It contains:
-
-1. the workbook instrument list;
-2. backtests for all selected instruments;
-3. one dual-axis chart per instrument;
-4. an actual-NAV comparison chart for all 9 instruments;
-5. a performance summary table.
-
-For each dual-axis chart:
-
-- the left axis shows actual NAV;
-- the right axis shows the actual closing price;
-- the chart is useful for timing and turning points, but the visual heights of the two lines are not comparable returns.
-
-For a rigorous strategy-versus-underlying comparison, use `NAV Index` and `Close Index`, since both are normalized to 100.
-
-Major x-axis ticks are fixed at April 5 of each year:
-
-```text
-2005/4/5, 2006/4/5, ..., 2026/4/5
-```
-
-Edit `SELECTED_SYMBOLS` to include or exclude instruments. Set:
-
-```python
-SAVE_CHARTS = True
-```
-
-to save charts under `charts/`.
+Dual-axis line heights are not directly comparable. Use `NAV Index` and `Close Index`, both normalized to 100, for return comparisons.
 
 ## Tests
 
-Run from the project root:
-
 ```bash
-python3 -m unittest -v \
-  test_multisymbol \
-  test_parity
+python3 -m unittest -v test_strategy test_multisymbol
 ```
 
-`test_multisymbol` verifies discovery of all 9 instruments, successful backtests, passing NAV balance checks, and stable key CSI 300 results.
-
-`test_parity` compares Python with formula values cached by the original workbook:
-
-- 5,152 rows;
-- 22 daily calculated fields;
-- 14 summary metrics.
-
-If `data/reference_workbook.xlsx` is absent, or if it does not contain cached formula results, the parity test is intentionally skipped. This does not indicate a Python backtest failure.
-
-## Main code entry points
-
-| Functionality | File / function |
-|---|---|
-| Command-line orchestration | `run_backtest.py: main()` |
-| Core strategy | `turtle_backtest.py: run_backtest()` |
-| CSV loader | `turtle_backtest.py: load_csv()` |
-| Single-instrument Excel loader | `turtle_backtest.py: load_reference_xlsx()` |
-| Multi-instrument Excel loader | `turtle_backtest.py: load_raw_data_xlsx()` |
-| Instrument selection | `turtle_backtest.py: select_instrument()` |
-| Daily CSV output | `turtle_backtest.py: write_results_csv()` |
-| Excel XML reader | `inspect_workbook.py: sheet_cells()` |
+Tests cover parameter-driven warm-up, completed-bar-only channels, strict breakouts, future-data invariance, legacy 51-bar compatibility, all nine instruments, account balance checks, and regression results.

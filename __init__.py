@@ -1,4 +1,4 @@
-"""Python implementation of the reference turtle-trading workbook."""
+"""Raw-data-driven Turtle Trading backtest."""
 
 from .turtle_backtest import (
     BacktestRow,
