@@ -9,4 +9,4 @@ __pycache__/
 htmlcov/
 .venv/
 venv/
-charts/
+charts/index_nav_vs_close.png

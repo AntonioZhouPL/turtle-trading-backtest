@@ -15,6 +15,12 @@
 - 逐日交易明细、绩效汇总；
 - Jupyter Notebook 净值和收盘价图表。
 
+### 回测净值总览
+
+下图比较了原始数据中全部 9 个标的应用同一套海龟规则后的实际 NAV：
+
+![9个标的海龟策略NAV对比](charts/turtle_nav_comparison.png)
+
 回测核心仅使用 Python 标准库。绘图 Notebook 额外使用 Jupyter、pandas 和 matplotlib。
 
 ## 目录结构
@@ -485,6 +491,12 @@ This directory contains a Python implementation of the Turtle Trading backtest. 
 - single-instrument and batch backtests;
 - daily trade details and performance summaries;
 - Jupyter charts for NAV and closing prices.
+
+### NAV overview
+
+The chart below compares actual NAV across all 9 source instruments using the same Turtle rules:
+
+![Turtle strategy NAV comparison across 9 instruments](charts/turtle_nav_comparison.png)
 
 The backtest engine uses only the Python standard library. The notebook additionally requires Jupyter, pandas, and matplotlib.
 
