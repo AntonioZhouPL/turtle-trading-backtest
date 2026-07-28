@@ -10,3 +10,7 @@ htmlcov/
 .venv/
 venv/
 charts/index_nav_vs_close.png
+outputs/*
+!outputs/.gitkeep
+backtest.csv
+data/reference_workbook.xlsx

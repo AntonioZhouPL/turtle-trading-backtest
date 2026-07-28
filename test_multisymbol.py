@@ -6,10 +6,13 @@ import math
 import unittest
 from pathlib import Path
 
-from .turtle_backtest import load_raw_data_xlsx, run_backtest
+try:
+    from .turtle_backtest import load_raw_data_xlsx, run_backtest
+except ImportError:
+    from turtle_backtest import load_raw_data_xlsx, run_backtest
 
-ROOT = Path(__file__).resolve().parents[1]
-RAW_DATA = ROOT / "Excel_version" / "海龟法则_stock_data_2026.xlsx"
+ROOT = Path(__file__).resolve().parent
+RAW_DATA = ROOT / "data" / "market_data.xlsx"
 
 
 class MultiSymbolTest(unittest.TestCase):

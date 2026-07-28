@@ -14,8 +14,8 @@ except ImportError:
     from inspect_workbook import shared_strings, sheet_cells
     from turtle_backtest import load_reference_xlsx, run_backtest
 
-ROOT = Path(__file__).resolve().parents[1]
-REFERENCE = ROOT / "Excel_version" / "海龟回测_沪深300_周淞铭.xlsx"
+ROOT = Path(__file__).resolve().parent
+REFERENCE = ROOT / "data" / "reference_workbook.xlsx"
 
 FIELD_TO_COLUMN = {
     "clean_open": "G",
@@ -46,6 +46,10 @@ FIELD_TO_COLUMN = {
 class WorkbookParityTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        if not REFERENCE.exists():
+            raise unittest.SkipTest(
+                "未提供 data/reference_workbook.xlsx；跳过 Excel 逐单元格对账"
+            )
         cls.rows, cls.summary = run_backtest(load_reference_xlsx(REFERENCE))
         with zipfile.ZipFile(REFERENCE) as book:
             cls.cached = sheet_cells(

@@ -19,7 +19,7 @@ try:
         select_instrument,
         write_results_csv,
     )
-except ImportError:  # ``python Py_version/run_backtest.py ...``
+except ImportError:  # ``python run_backtest.py ...``
     from turtle_backtest import (
         Parameters,
         load_csv,

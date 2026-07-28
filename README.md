@@ -23,35 +23,49 @@
 
 回测核心仅使用 Python 标准库。绘图 Notebook 额外使用 Jupyter、pandas 和 matplotlib。
 
+如需运行 Notebook，安装绘图依赖：
+
+```bash
+python3 -m pip install -r requirements-notebook.txt
+```
+
 ## 目录结构
 
 ```text
-Py_version/
+turtle-trading-backtest/
+├── data/
+│   ├── market_data.xlsx         # 9个标的的示例 OHLC 数据
+│   └── README.md                # 数据说明
+├── charts/
+│   └── turtle_nav_comparison.png
+├── outputs/                     # 本地运行结果，不提交 Git
 ├── run_backtest.py              # 命令行入口
-├── turtle_backtest.py           # 数据模型、行情读取、海龟公式、结果输出
+├── turtle_backtest.py           # 数据读取、海龟公式、账户和指标
 ├── inspect_workbook.py          # 直接读取 xlsx 内部 XML
-├── index_nav_vs_close.ipynb     # 9个标的的 NAV / Close 图表
+├── index_nav_vs_close.ipynb     # NAV / Close 图表
+├── requirements-notebook.txt    # Notebook 绘图依赖
 ├── test_multisymbol.py          # 多标的回归测试
-├── test_parity.py               # Python 与 Excel 缓存结果对账
-└── all_results/                 # 批量回测输出示例
+├── test_parity.py               # 可选的 Excel 公式缓存对账
+└── README.md
 ```
 
-当前使用的 Excel 数据位于：
+仓库已包含多标的示例数据：
 
 ```text
-Excel_version/海龟法则_stock_data_2026.xlsx
-Excel_version/海龟回测_沪深300_周淞铭.xlsx
+data/market_data.xlsx
 ```
+
+原版单标的 Excel 不随仓库提交。如需运行逐单元格对账，可自行放置为 `data/reference_workbook.xlsx`。
 
 ## 快速开始
 
-所有命令均在项目根目录 `Turtle_Trading` 执行。
+所有命令均在克隆后的仓库根目录 `turtle-trading-backtest` 执行。
 
 ### 查看工作簿中的全部标的
 
 ```bash
-python3 Py_version/run_backtest.py \
-  "Excel_version/海龟法则_stock_data_2026.xlsx" \
+python3 run_backtest.py \
+  "data/market_data.xlsx" \
   --list-symbols
 ```
 
@@ -74,32 +88,32 @@ python3 Py_version/run_backtest.py \
 可以通过代码或名称选择标的：
 
 ```bash
-python3 Py_version/run_backtest.py \
-  "Excel_version/海龟法则_stock_data_2026.xlsx" \
+python3 run_backtest.py \
+  "data/market_data.xlsx" \
   --symbol 000905.SH \
-  -o Py_version/中证500.csv
+  -o outputs/csi500.csv
 ```
 
 程序会：
 
 1. 在终端打印该标的的 JSON 汇总指标；
-2. 将完整逐日回测明细写入 `Py_version/中证500.csv`。
+2. 将完整逐日回测明细写入 `outputs/csi500.csv`。
 
 如果不传 `--symbol`，多标的工作簿默认选择 `000300.SH`（沪深300）。
 
 ### 批量回测全部标的
 
 ```bash
-python3 Py_version/run_backtest.py \
-  "Excel_version/海龟法则_stock_data_2026.xlsx" \
+python3 run_backtest.py \
+  "data/market_data.xlsx" \
   --all \
-  -o Py_version/all_results
+  -o outputs
 ```
 
 批量模式输出：
 
 ```text
-Py_version/all_results/
+outputs/
 ├── 000300.SH_沪深300.csv
 ├── 000905.SH_中证500.csv
 ├── ...
@@ -107,22 +121,24 @@ Py_version/all_results/
 └── summary.csv
 ```
 
-每个标的一份逐日明细，`summary.csv` 汇总所有标的的绩效指标。
+每个标的一份逐日明细，`summary.csv` 汇总所有标的的绩效指标。`outputs/` 中的生成结果默认被 Git 忽略。
 
 ### 回测原版单标的 Excel
 
+先将原版工作簿放到 `data/reference_workbook.xlsx`，再运行：
+
 ```bash
-python3 Py_version/run_backtest.py \
-  "Excel_version/海龟回测_沪深300_周淞铭.xlsx" \
-  -o Py_version/backtest_result.csv
+python3 run_backtest.py \
+  "data/reference_workbook.xlsx" \
+  -o outputs/backtest_result.csv
 ```
 
 ### 回测 CSV
 
 ```bash
-python3 Py_version/run_backtest.py \
+python3 run_backtest.py \
   "path/to/prices.csv" \
-  -o Py_version/backtest_result.csv
+  -o outputs/backtest_result.csv
 ```
 
 CSV 表头必须包含：
@@ -155,7 +171,7 @@ Date,open,high,low,close
 查看完整命令行帮助：
 
 ```bash
-python3 Py_version/run_backtest.py --help
+python3 run_backtest.py --help
 ```
 
 ## 数据读取逻辑
@@ -189,7 +205,7 @@ Excel 文件通过 `zipfile` 和 XML 直接读取，不需要安装或启动 Mic
 所有核心计算集中在：
 
 ```python
-Py_version/turtle_backtest.py
+turtle_backtest.py
 run_backtest()
 ```
 
@@ -392,13 +408,13 @@ Close Index = Clean Close / 首日 Clean Close × 100
 打开：
 
 ```text
-Py_version/index_nav_vs_close.ipynb
+index_nav_vs_close.ipynb
 ```
 
 Notebook 默认读取：
 
 ```text
-Excel_version/海龟法则_stock_data_2026.xlsx
+data/market_data.xlsx
 ```
 
 并回测原数据中的全部 9 个标的。
@@ -434,7 +450,7 @@ SAVE_CHARTS = True
 即可把图表保存到：
 
 ```text
-Py_version/charts/
+charts/
 ```
 
 ## 测试
@@ -443,8 +459,8 @@ Py_version/charts/
 
 ```bash
 python3 -m unittest -v \
-  Py_version.test_multisymbol \
-  Py_version.test_parity
+  test_multisymbol \
+  test_parity
 ```
 
 `test_multisymbol` 验证：
@@ -460,7 +476,7 @@ python3 -m unittest -v \
 - 22 个逐日计算字段；
 - 14 个汇总指标。
 
-如果当前参考工作簿没有保存公式计算缓存，该项测试会主动跳过；这不代表 Python 回测失败。
+如果没有提供 `data/reference_workbook.xlsx`，或工作簿没有保存公式计算缓存，该项测试会主动跳过；这不代表 Python 回测失败。
 
 ## 主要代码入口
 
@@ -500,35 +516,49 @@ The chart below compares actual NAV across all 9 source instruments using the sa
 
 The backtest engine uses only the Python standard library. The notebook additionally requires Jupyter, pandas, and matplotlib.
 
+To run the notebook, install its charting dependencies:
+
+```bash
+python3 -m pip install -r requirements-notebook.txt
+```
+
 ## Project structure
 
 ```text
-Py_version/
+turtle-trading-backtest/
+├── data/
+│   ├── market_data.xlsx         # Example OHLC data for 9 instruments
+│   └── README.md                # Data notes
+├── charts/
+│   └── turtle_nav_comparison.png
+├── outputs/                     # Local generated results, ignored by Git
 ├── run_backtest.py              # Command-line entry point
-├── turtle_backtest.py           # Data loaders, strategy, metrics, and output
+├── turtle_backtest.py           # Loaders, strategy, account, and metrics
 ├── inspect_workbook.py          # Direct xlsx XML reader
-├── index_nav_vs_close.ipynb     # NAV and Close charts for 9 instruments
+├── index_nav_vs_close.ipynb     # NAV and Close charts
+├── requirements-notebook.txt    # Notebook charting dependencies
 ├── test_multisymbol.py          # Multi-instrument regression tests
-├── test_parity.py               # Python-to-Excel parity tests
-└── all_results/                 # Example batch-backtest output
+├── test_parity.py               # Optional Excel formula-cache parity test
+└── README.md
 ```
 
-Current source workbooks:
+The repository includes the multi-instrument example data:
 
 ```text
-Excel_version/海龟法则_stock_data_2026.xlsx
-Excel_version/海龟回测_沪深300_周淞铭.xlsx
+data/market_data.xlsx
 ```
+
+The original single-instrument workbook is not committed. To run cell-by-cell parity checks, provide it locally as `data/reference_workbook.xlsx`.
 
 ## Quick start
 
-Run all commands from the `Turtle_Trading` project root.
+Run all commands from the cloned `turtle-trading-backtest` repository root.
 
 ### List all instruments
 
 ```bash
-python3 Py_version/run_backtest.py \
-  "Excel_version/海龟法则_stock_data_2026.xlsx" \
+python3 run_backtest.py \
+  "data/market_data.xlsx" \
   --list-symbols
 ```
 
@@ -551,10 +581,10 @@ The workbook currently contains 9 instruments:
 Select an instrument by symbol or name:
 
 ```bash
-python3 Py_version/run_backtest.py \
-  "Excel_version/海龟法则_stock_data_2026.xlsx" \
+python3 run_backtest.py \
+  "data/market_data.xlsx" \
   --symbol 000905.SH \
-  -o Py_version/csi500.csv
+  -o outputs/csi500.csv
 ```
 
 The program prints summary metrics as JSON and writes the complete daily results to the output CSV. If `--symbol` is omitted, a multi-instrument workbook defaults to `000300.SH`.
@@ -562,16 +592,16 @@ The program prints summary metrics as JSON and writes the complete daily results
 ### Backtest all instruments
 
 ```bash
-python3 Py_version/run_backtest.py \
-  "Excel_version/海龟法则_stock_data_2026.xlsx" \
+python3 run_backtest.py \
+  "data/market_data.xlsx" \
   --all \
-  -o Py_version/all_results
+  -o outputs
 ```
 
-Batch mode creates one daily-detail CSV per instrument and a combined `summary.csv`:
+Batch mode creates one daily-detail CSV per instrument and a combined `summary.csv`. Generated files under `outputs/` are ignored by Git:
 
 ```text
-Py_version/all_results/
+outputs/
 ├── 000300.SH_沪深300.csv
 ├── 000905.SH_中证500.csv
 ├── ...
@@ -581,18 +611,20 @@ Py_version/all_results/
 
 ### Backtest the original single-instrument workbook
 
+First place the original workbook at `data/reference_workbook.xlsx`, then run:
+
 ```bash
-python3 Py_version/run_backtest.py \
-  "Excel_version/海龟回测_沪深300_周淞铭.xlsx" \
-  -o Py_version/backtest_result.csv
+python3 run_backtest.py \
+  "data/reference_workbook.xlsx" \
+  -o outputs/backtest_result.csv
 ```
 
 ### Backtest a CSV file
 
 ```bash
-python3 Py_version/run_backtest.py \
+python3 run_backtest.py \
   "path/to/prices.csv" \
-  -o Py_version/backtest_result.csv
+  -o outputs/backtest_result.csv
 ```
 
 The CSV header must contain:
@@ -620,7 +652,7 @@ Header matching is case-insensitive. Dates may be ISO dates such as `2026-07-28`
 Display all CLI options with:
 
 ```bash
-python3 Py_version/run_backtest.py --help
+python3 run_backtest.py --help
 ```
 
 ## Data loading
@@ -831,10 +863,10 @@ No risk-free rate is deducted, which is equivalent to assuming a zero risk-free 
 Open:
 
 ```text
-Py_version/index_nav_vs_close.ipynb
+index_nav_vs_close.ipynb
 ```
 
-The notebook reads `Excel_version/海龟法则_stock_data_2026.xlsx` by default and backtests all 9 instruments. It contains:
+The notebook reads `data/market_data.xlsx` by default and backtests all 9 instruments. It contains:
 
 1. the workbook instrument list;
 2. backtests for all selected instruments;
@@ -862,7 +894,7 @@ Edit `SELECTED_SYMBOLS` to include or exclude instruments. Set:
 SAVE_CHARTS = True
 ```
 
-to save charts under `Py_version/charts/`.
+to save charts under `charts/`.
 
 ## Tests
 
@@ -870,8 +902,8 @@ Run from the project root:
 
 ```bash
 python3 -m unittest -v \
-  Py_version.test_multisymbol \
-  Py_version.test_parity
+  test_multisymbol \
+  test_parity
 ```
 
 `test_multisymbol` verifies discovery of all 9 instruments, successful backtests, passing NAV balance checks, and stable key CSI 300 results.
@@ -882,7 +914,7 @@ python3 -m unittest -v \
 - 22 daily calculated fields;
 - 14 summary metrics.
 
-If the reference workbook does not contain cached formula results, the parity test is intentionally skipped. This does not indicate a Python backtest failure.
+If `data/reference_workbook.xlsx` is absent, or if it does not contain cached formula results, the parity test is intentionally skipped. This does not indicate a Python backtest failure.
 
 ## Main code entry points
 
