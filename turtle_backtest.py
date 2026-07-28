@@ -1,27 +1,17 @@
-"""Turtle-trading backtest driven by raw OHLC data.
-
-The trading formulas retain the calculation order, strict inequalities,
-previous-bar references, execution assumptions and performance definitions
-validated in the original workbook.  Spreadsheet coordinates and formula-cell
-locations are deliberately not part of the strategy engine.
-"""
+"""Turtle Trading formulas and backtest flow."""
 
 from __future__ import annotations
 
-import csv
 import math
-import re
 import statistics
-import zipfile
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import date, datetime
-from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Sequence
 
-try:
-    from .inspect_workbook import shared_strings, sheet_cells
-except ImportError:  # Direct script execution from the repository root.
-    from inspect_workbook import shared_strings, sheet_cells
+
+# ---------------------------------------------------------------------------
+# Parameters and result models
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -38,7 +28,7 @@ class Parameters:
 
     @property
     def required_history(self) -> int:
-        """Number of completed bars required before signals are evaluated."""
+        """Completed bars required before the first signal is evaluated."""
         if self.warmup_bars is not None:
             return self.warmup_bars
         return max(self.atr_period, self.entry_period, self.exit_period)
@@ -54,10 +44,11 @@ class PriceBar:
 
 
 @dataclass(frozen=True)
-class Instrument:
-    name: str
-    symbol: str
-    bars: tuple[PriceBar, ...]
+class CleanPrices:
+    open: float | None
+    high: float | None
+    low: float | None
+    close: float | None
 
 
 @dataclass
@@ -111,30 +102,12 @@ class Summary:
     current_signal: str
 
 
-def _positive(value: object) -> float | None:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if number > 0 else None
+# ---------------------------------------------------------------------------
+# Price cleaning and indicators
+# ---------------------------------------------------------------------------
 
 
-def _day_number(value: object) -> float:
-    """Convert a date, datetime, or spreadsheet serial date to a day number."""
-    if isinstance(value, datetime):
-        value = value.date()
-    if isinstance(value, date):
-        # Spreadsheet serial dates in the raw workbook use the 1900 date system.
-        return float((value - date(1899, 12, 30)).days)
-    return float(value)
-
-
-def run_backtest(
-    bars: Iterable[PriceBar], parameters: Parameters = Parameters()
-) -> tuple[list[BacktestRow], Summary]:
-    source = list(bars)
-    if not source:
-        raise ValueError("至少需要一行 OHLC 数据")
+def validate_parameters(parameters: Parameters) -> None:
     if parameters.atr_period <= 0 or parameters.entry_period <= 0:
         raise ValueError("ATR周期和入场周期必须大于0")
     if parameters.exit_period <= 0 or parameters.lot_size <= 0:
@@ -146,157 +119,376 @@ def run_backtest(
     if parameters.initial_cash <= 0:
         raise ValueError("初始资金必须大于0")
     if parameters.warmup_bars is not None:
-        minimum_channel_history = max(
+        minimum_history = max(
             parameters.entry_period, parameters.exit_period
         )
-        if parameters.warmup_bars < minimum_channel_history:
+        if parameters.warmup_bars < minimum_history:
             raise ValueError(
                 "自定义预热期不能小于入场周期和退出周期中的较大值"
             )
 
+
+def _positive(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def clean_prices(
+    bar: PriceBar, previous: BacktestRow | None
+) -> CleanPrices:
+    """Convert invalid prices to missing and forward-fill after the first bar."""
+    clean = CleanPrices(
+        open=_positive(bar.open),
+        high=_positive(bar.high),
+        low=_positive(bar.low),
+        close=_positive(bar.close),
+    )
+    if previous is None:
+        return clean
+    return CleanPrices(
+        open=clean.open if clean.open is not None else previous.clean_open,
+        high=clean.high if clean.high is not None else previous.clean_high,
+        low=clean.low if clean.low is not None else previous.clean_low,
+        close=clean.close if clean.close is not None else previous.clean_close,
+    )
+
+
+def calculate_tr(
+    prices: CleanPrices,
+    previous_close: float | None,
+) -> float | None:
+    """Calculate True Range from current prices and the previous close."""
+    if prices.high is None or prices.low is None:
+        return None
+    if previous_close is None:
+        return prices.high - prices.low
+    return max(
+        prices.high - prices.low,
+        abs(prices.high - previous_close),
+        abs(previous_close - prices.low),
+    )
+
+
+def calculate_atr(
+    tr: float | None,
+    previous_atr: float | None,
+    period: int,
+) -> float | None:
+    """Initialize ATR with TR, then apply the validated EMA formula."""
+    if previous_atr is None:
+        return tr
+    if tr is None:
+        return None
+    return 2 / (period + 1) * tr + (period - 1) / (period + 1) * previous_atr
+
+
+def calculate_channels(
+    rows: Sequence[BacktestRow],
+    parameters: Parameters,
+    record_number: int,
+) -> tuple[float | None, float | None]:
+    """Use completed bars only to form entry and exit channels."""
+    if len(rows) < parameters.required_history:
+        return None, None
+
+    high_window = [
+        row.clean_high for row in rows[-parameters.entry_period :]
+    ]
+    low_window = [
+        row.clean_low for row in rows[-parameters.exit_period :]
+    ]
+    if len(high_window) < parameters.entry_period or any(
+        value is None for value in high_window
+    ):
+        raise ValueError(f"第 {record_number} 条行情无法形成入场通道")
+    if len(low_window) < parameters.exit_period or any(
+        value is None for value in low_window
+    ):
+        raise ValueError(f"第 {record_number} 条行情无法形成退出通道")
+
+    return (
+        max(value for value in high_window if value is not None),
+        min(value for value in low_window if value is not None),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Turtle entry, exit, stop, and position rules
+# ---------------------------------------------------------------------------
+
+
+def calculate_signal(
+    prices: CleanPrices,
+    past_high: float | None,
+    past_low: float | None,
+    previous_signal: int,
+    previous_stop: float | None,
+) -> int:
+    if past_high is None or past_low is None:
+        return 0
+    if previous_signal == 0:
+        return int(prices.high is not None and prices.high > past_high)
+    if previous_stop is None:
+        raise ValueError("持仓状态缺少止损价")
+    exit_level = max(past_low, previous_stop)
+    return int(not (prices.low is not None and prices.low < exit_level))
+
+
+def calculate_trade_price(
+    prices: CleanPrices,
+    past_high: float | None,
+    past_low: float | None,
+    previous_stop: float | None,
+    is_buy: bool,
+    is_sell: bool,
+) -> float | None:
+    if not is_buy and not is_sell:
+        return None
+    if prices.open is None:
+        raise ValueError("交易日缺少可用开盘价")
+    if is_buy:
+        if past_high is None:
+            raise ValueError("买入信号缺少入场通道")
+        return max(prices.open, past_high)
+    if past_low is None or previous_stop is None:
+        raise ValueError("卖出信号缺少退出通道或止损价")
+    return min(prices.open, max(past_low, previous_stop))
+def calculate_stop_loss(
+    previous_atr: float | None,
+    previous_stop: float | None,
+    trade_price: float | None,
+    signal: int,
+    is_buy: bool,
+    record_number: int,
+) -> float | None:
+    if is_buy:
+        if previous_atr is None or trade_price is None:
+            raise ValueError(f"第 {record_number} 条行情缺少前一日 ATR")
+        return trade_price - previous_atr
+    return previous_stop if signal == 1 else None
+
+
+def calculate_position(
+    previous: BacktestRow,
+    signal: int,
+    is_buy: bool,
+    trade_price: float | None,
+    parameters: Parameters,
+) -> int:
+    if signal == 0:
+        return 0
+    if not is_buy:
+        return previous.position
+    if (
+        previous.atr is None
+        or previous.atr <= 0
+        or trade_price is None
+        or trade_price <= 0
+    ):
+        return 0
+
+    risk_position = (
+        previous.nav * parameters.risk_fraction / previous.atr
+    )
+    cash_position = previous.cash / (
+        trade_price * (1 + parameters.buy_cost_rate)
+    )
+    raw_position = min(risk_position, cash_position)
+    return math.floor(raw_position / parameters.lot_size) * parameters.lot_size
+
+
+# ---------------------------------------------------------------------------
+# Account and performance calculations
+# ---------------------------------------------------------------------------
+
+
+def update_cash(
+    previous_cash: float,
+    previous_position: int,
+    position: int,
+    trade_price: float | None,
+    parameters: Parameters,
+) -> float:
+    delta = position - previous_position
+    if delta == 0:
+        return previous_cash
+    if trade_price is None:
+        raise ValueError("仓位发生变化但缺少成交价")
+    cost_rate = (
+        parameters.buy_cost_rate
+        if delta > 0
+        else parameters.sell_cost_rate
+    )
+    return (
+        previous_cash
+        - delta * trade_price
+        - abs(delta) * trade_price * cost_rate
+    )
+
+
+def calculate_trading_cost(
+    previous_position: int,
+    position: int,
+    trade_price: float | None,
+    parameters: Parameters,
+) -> float:
+    delta = position - previous_position
+    if delta == 0:
+        return 0.0
+    if trade_price is None:
+        raise ValueError("仓位发生变化但缺少成交价")
+    rate = (
+        parameters.buy_cost_rate
+        if delta > 0
+        else parameters.sell_cost_rate
+    )
+    return abs(delta) * trade_price * rate
+
+
+def _day_number(value: object) -> float:
+    if isinstance(value, datetime):
+        value = value.date()
+    if isinstance(value, date):
+        return float((value - date(1899, 12, 30)).days)
+    return float(value)
+
+
+def calculate_summary(
+    rows: Sequence[BacktestRow],
+) -> Summary:
+    returns = [row.daily_return for row in rows[1:]]
+    annualized_volatility = (
+        statistics.stdev(returns) * math.sqrt(252)
+        if len(returns) >= 2
+        else 0.0
+    )
+    average_return = statistics.mean(returns) if returns else 0.0
+    elapsed_days = _day_number(rows[-1].date) - _day_number(rows[0].date)
+    annualized_return = (
+        (rows[-1].nav / rows[0].nav) ** (365 / elapsed_days) - 1
+        if elapsed_days
+        else 0.0
+    )
+    return Summary(
+        start=rows[0].date,
+        end=rows[-1].date,
+        ending_nav=rows[-1].nav,
+        total_return=rows[-1].nav / rows[0].nav - 1,
+        annualized_return=annualized_return,
+        max_drawdown=min(row.drawdown for row in rows),
+        annualized_volatility=annualized_volatility,
+        sharpe_ratio=(
+            average_return * 252 / annualized_volatility
+            if annualized_volatility
+            else 0.0
+        ),
+        buys=sum(row.trade == "BUY" for row in rows),
+        sells=sum(row.trade == "SELL" for row in rows),
+        time_in_market=statistics.mean(row.signal for row in rows),
+        ending_position=rows[-1].position,
+        total_trading_cost=sum(row.trading_cost for row in rows),
+        nav_check=(
+            "PASS"
+            if abs(rows[-1].nav - (rows[-1].cash + rows[-1].stock_value))
+            < 0.01
+            else "FAIL"
+        ),
+        minimum_cash=min(row.cash for row in rows),
+        current_signal="持仓" if rows[-1].signal == 1 else "空仓",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Backtest orchestration
+# ---------------------------------------------------------------------------
+
+
+def run_backtest(
+    bars: Iterable[PriceBar],
+    parameters: Parameters = Parameters(),
+) -> tuple[list[BacktestRow], Summary]:
+    source = list(bars)
+    if not source:
+        raise ValueError("至少需要一行 OHLC 数据")
+    validate_parameters(parameters)
+
     rows: list[BacktestRow] = []
     running_nav_high = parameters.initial_cash
-    required_history = parameters.required_history
 
     for index, bar in enumerate(source):
         previous = rows[-1] if rows else None
-        clean_open = _positive(bar.open)
-        clean_high = _positive(bar.high)
-        clean_low = _positive(bar.low)
-        clean_close = _positive(bar.close)
-        if previous is not None:
-            clean_open = clean_open if clean_open is not None else previous.clean_open
-            clean_high = clean_high if clean_high is not None else previous.clean_high
-            clean_low = clean_low if clean_low is not None else previous.clean_low
-            clean_close = clean_close if clean_close is not None else previous.clean_close
-
-        if clean_high is None or clean_low is None:
-            tr = None
-        elif previous is None:
-            tr = clean_high - clean_low
-        else:
-            if previous.clean_close is None:
-                raise ValueError(f"第 {index + 1} 行缺少可用的前收盘价")
-            tr = max(
-                clean_high - clean_low,
-                abs(clean_high - previous.clean_close),
-                abs(previous.clean_close - clean_low),
-            )
-
-        if previous is None:
-            atr = tr
-        elif tr is None or previous.atr is None:
-            atr = None
-        else:
-            n = parameters.atr_period
-            atr = 2 / (n + 1) * tr + (n - 1) / (n + 1) * previous.atr
-
         record_number = index + 1
-        warmed_up = len(rows) >= required_history
-        if warmed_up:
-            high_window = [
-                row.clean_high for row in rows[-parameters.entry_period :]
-            ]
-            low_window = [row.clean_low for row in rows[-parameters.exit_period :]]
-            if len(high_window) < parameters.entry_period or any(
-                value is None for value in high_window
-            ):
-                raise ValueError(f"第 {record_number} 条行情无法形成入场通道")
-            if len(low_window) < parameters.exit_period or any(
-                value is None for value in low_window
-            ):
-                raise ValueError(f"第 {record_number} 条行情无法形成退出通道")
-            past_high = max(high_window)  # type: ignore[arg-type]
-            past_low = min(low_window)  # type: ignore[arg-type]
-        else:
-            past_high = None
-            past_low = None
+
+        prices = clean_prices(bar, previous)
+        tr = calculate_tr(
+            prices,
+            previous.clean_close if previous else None,
+        )
+        atr = calculate_atr(
+            tr,
+            previous.atr if previous else None,
+            parameters.atr_period,
+        )
+        past_high, past_low = calculate_channels(
+            rows, parameters, record_number
+        )
 
         previous_signal = previous.signal if previous else 0
         previous_stop = previous.stop_loss if previous else None
-        if not warmed_up:
-            signal = 0
-        elif previous_signal == 0:
-            signal = int(clean_high is not None and clean_high > past_high)
-        else:
-            exit_level = max(past_low, previous_stop)  # type: ignore[type-var]
-            signal = int(not (clean_low is not None and clean_low < exit_level))
-
+        signal = calculate_signal(
+            prices,
+            past_high,
+            past_low,
+            previous_signal,
+            previous_stop,
+        )
         is_buy = previous_signal == 0 and signal == 1
         is_sell = previous_signal == 1 and signal == 0
-        if is_buy:
-            trade_price = max(clean_open, past_high)  # type: ignore[type-var]
-        elif is_sell:
-            exit_level = max(past_low, previous_stop)  # type: ignore[type-var]
-            trade_price = min(clean_open, exit_level)  # type: ignore[type-var]
-        else:
-            trade_price = None
-
-        if not warmed_up:
-            stop_loss = None
-        elif is_buy:
-            if previous is None or previous.atr is None:
-                raise ValueError(f"第 {record_number} 条行情缺少前一日 ATR")
-            stop_loss = trade_price - previous.atr  # type: ignore[operator]
-        elif signal == 1:
-            stop_loss = previous_stop
-        else:
-            stop_loss = None
+        trade_price = calculate_trade_price(
+            prices,
+            past_high,
+            past_low,
+            previous_stop,
+            is_buy,
+            is_sell,
+        )
+        stop_loss = calculate_stop_loss(
+            previous.atr if previous else None,
+            previous_stop,
+            trade_price,
+            signal,
+            is_buy,
+            record_number,
+        )
 
         if previous is None:
             position = 0
             cash = parameters.initial_cash
-        else:
-            if not warmed_up:
-                position = 0
-            elif is_buy:
-                if previous.atr and previous.atr > 0 and trade_price and trade_price > 0:
-                    risk_position = (
-                        previous.nav * parameters.risk_fraction / previous.atr
-                    )
-                    cash_position = previous.cash / (
-                        trade_price * (1 + parameters.buy_cost_rate)
-                    )
-                    raw_position = min(risk_position, cash_position)
-                    # Equivalent to rounding a positive position down by lot size.
-                    position = (
-                        math.floor(raw_position / parameters.lot_size)
-                        * parameters.lot_size
-                    )
-                else:
-                    position = 0
-            elif signal == 1:
-                position = previous.position
-            else:
-                position = 0
-
-            delta = position - previous.position
-            if delta == 0:
-                cash = previous.cash
-            else:
-                cost_rate = (
-                    parameters.buy_cost_rate
-                    if position > previous.position
-                    else parameters.sell_cost_rate
-                )
-                cash = (
-                    previous.cash
-                    - delta * trade_price  # type: ignore[operator]
-                    - abs(delta) * trade_price * cost_rate  # type: ignore[operator]
-                )
-
-        stock_value = position * clean_close if clean_close is not None else 0.0
-        if previous is None or position == previous.position:
             trading_cost = 0.0
         else:
-            rate = (
-                parameters.buy_cost_rate
-                if position > previous.position
-                else parameters.sell_cost_rate
+            position = calculate_position(
+                previous, signal, is_buy, trade_price, parameters
             )
-            trading_cost = (
-                abs(position - previous.position) * trade_price * rate  # type: ignore[operator]
+            cash = update_cash(
+                previous.cash,
+                previous.position,
+                position,
+                trade_price,
+                parameters,
             )
+            trading_cost = calculate_trading_cost(
+                previous.position,
+                position,
+                trade_price,
+                parameters,
+            )
+
+        stock_value = (
+            position * prices.close if prices.close is not None else 0.0
+        )
         nav = cash + stock_value
         daily_pnl = 0.0 if previous is None else nav - previous.nav
         daily_return = (
@@ -308,11 +500,11 @@ def run_backtest(
         drawdown = 0.0 if nav == 0 else nav / running_nav_high - 1
         nav_index = nav / parameters.initial_cash * 100
         initial_close = (
-            clean_close if previous is None else rows[0].clean_close
+            prices.close if previous is None else rows[0].clean_close
         )
         close_index = (
-            clean_close / initial_close * 100
-            if clean_close is not None and initial_close not in (None, 0)
+            prices.close / initial_close * 100
+            if prices.close is not None and initial_close not in (None, 0)
             else None
         )
         trade = "BUY" if is_buy and position > 0 else "SELL" if is_sell else ""
@@ -324,10 +516,10 @@ def run_backtest(
                 high=bar.high,
                 low=bar.low,
                 close=bar.close,
-                clean_open=clean_open,
-                clean_high=clean_high,
-                clean_low=clean_low,
-                clean_close=clean_close,
+                clean_open=prices.open,
+                clean_high=prices.high,
+                clean_low=prices.low,
+                clean_close=prices.close,
                 tr=tr,
                 atr=atr,
                 past_high=past_high,
@@ -349,211 +541,4 @@ def run_backtest(
             )
         )
 
-    returns = [row.daily_return for row in rows[1:]]
-    annualized_volatility = (
-        statistics.stdev(returns) * math.sqrt(252) if len(returns) >= 2 else 0.0
-    )
-    average_return = statistics.mean(returns) if returns else 0.0
-    elapsed_days = _day_number(rows[-1].date) - _day_number(rows[0].date)
-    annualized_return = (
-        (rows[-1].nav / rows[0].nav) ** (365 / elapsed_days) - 1
-        if elapsed_days
-        else 0.0
-    )
-    summary = Summary(
-        start=rows[0].date,
-        end=rows[-1].date,
-        ending_nav=rows[-1].nav,
-        total_return=rows[-1].nav / rows[0].nav - 1,
-        annualized_return=annualized_return,
-        max_drawdown=min(row.drawdown for row in rows),
-        annualized_volatility=annualized_volatility,
-        sharpe_ratio=(
-            average_return * 252 / annualized_volatility
-            if annualized_volatility
-            else 0.0
-        ),
-        buys=sum(row.trade == "BUY" for row in rows),
-        sells=sum(row.trade == "SELL" for row in rows),
-        time_in_market=statistics.mean(row.signal for row in rows),
-        ending_position=rows[-1].position,
-        total_trading_cost=sum(row.trading_cost for row in rows),
-        nav_check=(
-            "PASS"
-            if abs(rows[-1].nav - (rows[-1].cash + rows[-1].stock_value)) < 0.01
-            else "FAIL"
-        ),
-        minimum_cash=min(row.cash for row in rows),
-        current_signal="持仓" if rows[-1].signal == 1 else "空仓",
-    )
-    return rows, summary
-
-
-def _column_name(index: int) -> str:
-    result = ""
-    while index:
-        index, remainder = divmod(index - 1, 26)
-        result = chr(65 + remainder) + result
-    return result
-
-
-def load_raw_data_xlsx(path: str | Path) -> list[Instrument]:
-    """Load every Date/open/high/low/close block from the Raw_data workbook."""
-    with zipfile.ZipFile(path) as book:
-        cells = sheet_cells(
-            book, "xl/worksheets/sheet1.xml", shared_strings(book)
-        )
-
-    instruments: list[Instrument] = []
-    start_column = 1
-    while start_column <= 16384:
-        columns = [_column_name(start_column + offset) for offset in range(5)]
-        headers = [
-            str(cells.get(f"{column}5", {}).get("value") or "").strip().lower()
-            for column in columns
-        ]
-        if headers != ["date", "open", "high", "low", "close"]:
-            start_column += 1
-            continue
-
-        name = str(cells.get(f"{columns[1]}2", {}).get("value") or "").strip()
-        symbol = str(cells.get(f"{columns[1]}3", {}).get("value") or "").strip()
-        raw_bars: list[PriceBar] = []
-        row_number = 6
-        while f"{columns[0]}{row_number}" in cells:
-            raw_bars.append(
-                PriceBar(
-                    date=cells[f"{columns[0]}{row_number}"]["value"],
-                    open=cells.get(f"{columns[1]}{row_number}", {}).get("value"),
-                    high=cells.get(f"{columns[2]}{row_number}", {}).get("value"),
-                    low=cells.get(f"{columns[3]}{row_number}", {}).get("value"),
-                    close=cells.get(f"{columns[4]}{row_number}", {}).get("value"),
-                )
-            )
-            row_number += 1
-
-        first_valid = next(
-            (
-                index
-                for index, bar in enumerate(raw_bars)
-                if all(
-                    _positive(value) is not None
-                    for value in (bar.open, bar.high, bar.low, bar.close)
-                )
-            ),
-            None,
-        )
-        if first_valid is not None:
-            instruments.append(
-                Instrument(name=name, symbol=symbol, bars=tuple(raw_bars[first_valid:]))
-            )
-        start_column += 5
-    if not instruments:
-        raise ValueError("没有在 Raw_data 中找到 Date/open/high/low/close 数据块")
-    return instruments
-
-
-def select_instrument(
-    instruments: Sequence[Instrument], query: str
-) -> Instrument:
-    normalized = query.strip().casefold()
-    exact = [
-        item
-        for item in instruments
-        if normalized in {item.name.casefold(), item.symbol.casefold()}
-    ]
-    if len(exact) == 1:
-        return exact[0]
-    partial = [
-        item
-        for item in instruments
-        if normalized in item.name.casefold() or normalized in item.symbol.casefold()
-    ]
-    if len(partial) == 1:
-        return partial[0]
-    choices = "、".join(f"{item.name} ({item.symbol})" for item in instruments)
-    raise ValueError(f"无法唯一识别 {query!r}；可选标的：{choices}")
-
-
-def safe_filename(instrument: Instrument) -> str:
-    stem = f"{instrument.symbol}_{instrument.name}"
-    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", stem).strip(" .")
-
-
-def load_csv(path: str | Path) -> list[PriceBar]:
-    with open(path, newline="", encoding="utf-8-sig") as source:
-        reader = csv.DictReader(source)
-        if reader.fieldnames is None:
-            raise ValueError("CSV 没有表头")
-        lowered = {name.strip().lower(): name for name in reader.fieldnames}
-        required = {"date", "open", "high", "low", "close"}
-        if not required.issubset(lowered):
-            raise ValueError("CSV 表头必须包含 Date, open, high, low, close")
-
-        result = []
-        for record in reader:
-            raw_date = record[lowered["date"]].strip()
-            try:
-                parsed_date: object = datetime.fromisoformat(raw_date).date()
-            except ValueError:
-                parsed_date = float(raw_date)
-            result.append(
-                PriceBar(
-                    date=parsed_date,
-                    open=_csv_number(record[lowered["open"]]),
-                    high=_csv_number(record[lowered["high"]]),
-                    low=_csv_number(record[lowered["low"]]),
-                    close=_csv_number(record[lowered["close"]]),
-                )
-            )
-    return result
-
-
-def _csv_number(value: str) -> float | None:
-    value = value.strip()
-    return None if value == "" else float(value)
-
-
-OUTPUT_COLUMNS = [
-    "Date",
-    "open",
-    "high",
-    "low",
-    "close",
-    "Clean Open",
-    "Clean High",
-    "Clean Low",
-    "Clean Close",
-    "TR",
-    "ATR",
-    "Past High",
-    "Past Low",
-    "Signal",
-    "Trade Price",
-    "Stop Loss",
-    "Position",
-    "Cash",
-    "Stock Value",
-    "Trading Cost",
-    "Daily P&L",
-    "NAV",
-    "Daily Return",
-    "Drawdown",
-    "NAV Index",
-    "Close Index",
-    "Trade",
-]
-
-
-def write_results_csv(rows: Sequence[BacktestRow], path: str | Path) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8-sig") as destination:
-        writer = csv.writer(destination)
-        writer.writerow(OUTPUT_COLUMNS)
-        for row in rows:
-            values = list(asdict(row).values())
-            writer.writerow(["" if value is None else value for value in values])
-
-
-def summary_dict(summary: Summary) -> Mapping[str, object]:
-    return asdict(summary)
+    return rows, calculate_summary(rows)

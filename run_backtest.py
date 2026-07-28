@@ -9,25 +9,23 @@ from dataclasses import asdict
 from pathlib import Path
 
 try:
-    from .turtle_backtest import (
-        Parameters,
+    from .data_loader import (
         load_csv,
         load_raw_data_xlsx,
-        run_backtest,
         safe_filename,
         select_instrument,
         write_results_csv,
     )
+    from .turtle_backtest import Parameters, run_backtest
 except ImportError:  # ``python run_backtest.py ...``
-    from turtle_backtest import (
-        Parameters,
+    from data_loader import (
         load_csv,
         load_raw_data_xlsx,
-        run_backtest,
         safe_filename,
         select_instrument,
         write_results_csv,
     )
+    from turtle_backtest import Parameters, run_backtest
 
 
 def main() -> None:

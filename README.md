@@ -8,12 +8,6 @@
 
 这是一个以原始 OHLC 行情为唯一数据输入的 Python 海龟回测项目。
 
-TR、ATR、唐奇安通道、突破/退出、成交价、止损、风险仓位、交易成本、现金、NAV 和绩效指标的计算顺序，来自此前经过 Excel 回测验证的逻辑；但 Python 策略引擎不读取 Excel 公式、缓存结果、单元格地址或工作表行号。
-
-换句话说：
-
-> 保留经 Excel 验证的交易规则，移除 Excel 工作表布局对策略的控制。
-
 ### NAV 总览
 
 下图比较原始数据中全部 9 个标的使用同一套海龟规则后的实际 NAV：
@@ -30,14 +24,26 @@ turtle-trading-backtest/
 ├── charts/
 │   └── turtle_nav_comparison.png
 ├── outputs/                     # 本地生成结果，默认不提交
-├── turtle_backtest.py           # 海龟策略、账户和绩效计算
-├── run_backtest.py              # 命令行入口
-├── inspect_workbook.py          # Raw Data xlsx 的只读 XML 工具
+├── data_loader.py               # xlsx/CSV 读取与结果 CSV 输出
+├── turtle_backtest.py           # 海龟公式、交易规则、账户和绩效计算
+├── run_backtest.py              # 只负责命令行参数和调用
 ├── index_nav_vs_close.ipynb     # 回测图表 Notebook
-├── test_strategy.py             # 策略规则和无未来数据测试
-├── test_multisymbol.py          # 9标的回归测试
+├── tests/
+│   └── test_backtest.py         # 策略公式与完整回测测试
 ├── requirements-notebook.txt    # Notebook 依赖
 └── README.md
+```
+
+主流程一眼可以概括为：
+
+```text
+data/ 原始行情
+    ↓
+data_loader.py 读取并标准化 OHLC
+    ↓
+turtle_backtest.py 计算信号、交易、NAV 和指标
+    ↓
+run_backtest.py 输出 CSV / Notebook 绘图
 ```
 
 回测核心仅依赖 Python 标准库。运行 Notebook 需要：
@@ -371,7 +377,7 @@ Mean Daily Return × 252 / Annualized Volatility
 index_nav_vs_close.ipynb
 ```
 
-Notebook 直接调用 `turtle_backtest.py`，默认读取 `data/market_data.xlsx`，并绘制：
+Notebook 通过 `data_loader.py` 读取原始数据，再调用 `turtle_backtest.py`，并绘制：
 
 - 每个标的的实际 NAV（左轴）与 Close（右轴）；
 - 9个标的的实际 NAV 总览；
@@ -384,7 +390,7 @@ Notebook 直接调用 `turtle_backtest.py`，默认读取 `data/market_data.xlsx
 ## 测试
 
 ```bash
-python3 -m unittest -v test_strategy test_multisymbol
+python3 -m unittest discover -v
 ```
 
 测试覆盖：
@@ -423,14 +429,25 @@ turtle-trading-backtest/
 ├── data/market_data.xlsx
 ├── charts/turtle_nav_comparison.png
 ├── outputs/
+├── data_loader.py
 ├── turtle_backtest.py
 ├── run_backtest.py
-├── inspect_workbook.py
 ├── index_nav_vs_close.ipynb
-├── test_strategy.py
-├── test_multisymbol.py
+├── tests/test_backtest.py
 ├── requirements-notebook.txt
 └── README.md
+```
+
+The complete flow is:
+
+```text
+data/ raw OHLC
+    ↓
+data_loader.py loads and normalizes prices
+    ↓
+turtle_backtest.py calculates signals, trades, NAV, and metrics
+    ↓
+run_backtest.py writes CSV / Notebook draws charts
 ```
 
 The core engine uses only the Python standard library. For the notebook:
@@ -604,14 +621,14 @@ The Sharpe ratio assumes a zero risk-free rate.
 
 ## Notebook
 
-`index_nav_vs_close.ipynb` calls the same strategy engine and reads `data/market_data.xlsx`. It contains dual-axis NAV/Close charts, a nine-instrument NAV comparison, and a performance table.
+`index_nav_vs_close.ipynb` loads `data/market_data.xlsx` through `data_loader.py` and calls the same strategy engine. It contains dual-axis NAV/Close charts, a nine-instrument NAV comparison, and a performance table.
 
 Dual-axis line heights are not directly comparable. Use `NAV Index` and `Close Index`, both normalized to 100, for return comparisons.
 
 ## Tests
 
 ```bash
-python3 -m unittest -v test_strategy test_multisymbol
+python3 -m unittest discover -v
 ```
 
 Tests cover parameter-driven warm-up, completed-bar-only channels, strict breakouts, future-data invariance, legacy 51-bar compatibility, all nine instruments, account balance checks, and regression results.
